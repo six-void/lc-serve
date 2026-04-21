@@ -1616,6 +1616,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "confy",
+ "futures",
  "libp2p",
  "serde",
  "serde_derive",
