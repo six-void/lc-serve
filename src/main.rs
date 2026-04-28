@@ -1,4 +1,5 @@
 pub(crate) mod config;
+mod key;
 
 use crate::config::LcConfig;
 
@@ -21,6 +22,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg: LcConfig = confy::load("lc", Some("lc"))?;
     // dbg!(&cfg);
     info!("Started with these settings {:#?}", &cfg);
+
+    let key_path = &cfg.libp2p.key_location;
+
+    dbg!(key_path);
+
+    let keypair = key::get_key(key_path);
+
+    dbg!(&keypair);
 
     Ok(())
 }
