@@ -1,14 +1,25 @@
 pub(crate) mod config;
 mod key;
 
-use std::{time::Duration, u64};
+use std::{
+    env,
+    io::{self, BufRead},
+    path::PathBuf,
+    time::Duration,
+    u64,
+};
 
 use crate::config::LcConfig;
 
 use multiaddr::multiaddr;
 
 use futures::StreamExt;
-use libp2p::{multiaddr, noise, ping, swarm::SwarmEvent, tcp, yamux, Multiaddr};
+use libp2p::{
+    kad::{self, store::MemoryStore, Mode},
+    multiaddr, noise, ping,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux, Multiaddr,
+};
 use tracing::info;
 //use tracing_subscriber::EnvFilter;
 
@@ -24,8 +35,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .try_init();
 
     info!("Started lc");
+    let key = "LC_CONFIG_DIR";
 
-    let cfg: LcConfig = confy::load("lc", Some("lc"))?;
+    let cfg: LcConfig;
+
+    match env::var(key) {
+        Ok(path) => {
+            let mut file: PathBuf = PathBuf::new();
+            file.push(path);
+            file.push("lc.toml");
+            dbg!("custon location", &file);
+            cfg = confy::load_path(file)?;
+        }
+        Err(_) => {
+            cfg = confy::load("lc", Some("lc"))?;
+        }
+    }
+
+    // let cfg: LcConfig = confy::load("lc", Some("lc"))?;
     // dbg!(&cfg);
     info!("Started with these settings {:#?}", &cfg);
 
@@ -39,6 +66,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     dbg!(&location_addr);
 
+    #[derive(NetworkBehaviour)]
+    struct Behaviour {
+        kademlia: kad::Behaviour<MemoryStore>,
+        ping: ping::Behaviour,
+    }
+
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_tcp(
@@ -46,9 +79,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             noise::Config::new,
             yamux::Config::default,
         )?
-        .with_behaviour(|_| ping::Behaviour::default())?
+        .with_behaviour(|key| {
+            Ok(Behaviour {
+                kademlia: kad::Behaviour::new(
+                    key.public().to_peer_id(),
+                    MemoryStore::new(key.public().to_peer_id()),
+                ),
+                ping: ping::Behaviour::default(),
+            })
+        })?
         .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(u64::MAX)))
         .build();
+
+    swarm.behaviour_mut().kademlia.set_mode(Some(Mode::Server));
+
+    let mut stdin = io::BufReader::new(io::stdin()).lines();
 
     swarm.listen_on(location_addr)?;
 
@@ -59,12 +104,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     loop {
-        match swarm.select_next_some().await {
-            SwarmEvent::NewListenAddr { address, .. } => println!("Listening on {address:?}"),
-            SwarmEvent::Behaviour(event) => println!("{event:?}"),
-            _ => {}
-        }
-    }
+        futures::select! {
 
-    // Ok(())
+
+        event = swarm.select_next_some() => match event {
+            SwarmEvent::NewListenAddr { address, .. } => {
+                println!("Listening in {address:?}");
+            },
+            SwarmEvent::Behaviour(event) => println!("{event:?}"),
+                _ => {}
+                }
+            }
+
+        // Ok(())
+    }
 }
